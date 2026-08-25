@@ -1,0 +1,157 @@
+<!doctype html>
+<!--
+  Score-collab panel shell (design §3.3): hosts the Qt/WASM MuseScore engine in
+  an iframe and bridges the control plane over postMessage. Served by the
+  plugin at /score-collab/panel.html; the engine build itself is served from
+  /score-collab/engine/* (never from the frontend dist).
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>乐谱协作 · MuseScore</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-bottom: 1px solid CanvasText;
+    background: Canvas; font-size: 13px;
+  }
+  header .title { font-weight: 600; margin-right: auto; }
+  header .state { opacity: 0.75; }
+  button {
+    padding: 3px 10px; font: inherit; cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  main { flex: 1; position: relative; }
+  #engine {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    border: 0; background: Canvas;
+  }
+  #placeholder {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; text-align: center; padding: 24px;
+    background: Canvas; color: CanvasText;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title" id="title">乐谱协作</span>
+  <span class="state" id="state">引擎未加载</span>
+  <button id="open" type="button" disabled>打开乐谱</button>
+  <button id="load" type="button">重新加载引擎</button>
+</header>
+<main>
+  <div id="placeholder">
+    <div>
+      <p>Web 版 MuseScore 引擎尚未构建/加载（M2 产物接入前）。</p>
+      <p id="hint" style="opacity:.7">加载引擎后会在此 iframe 内启动乐谱编辑器。</p>
+    </div>
+  </div>
+  <iframe id="engine" class="hidden" title="MuseScore 引擎" allow="autoplay; clipboard-write"></iframe>
+</main>
+<script>
+(function () {
+  'use strict';
+
+  // Session id carried by the opener through the query string (design §3.3:
+  // engine ↔ host control plane is postMessage; scores live on disk, bridged
+  // out of band by the plugin's bridge). The engine viewer itself polls the
+  // session state for agent-marked reloads, so it must see the session id.
+  var session = new URLSearchParams(location.search).get('session') || '';
+  var engineUrl = '/score-collab/engine/viewer.html?session=' + encodeURIComponent(session);
+
+  var el = {
+    title: document.getElementById('title'),
+    state: document.getElementById('state'),
+    open: document.getElementById('open'),
+    load: document.getElementById('load'),
+    placeholder: document.getElementById('placeholder'),
+    engine: document.getElementById('engine'),
+    hint: document.getElementById('hint'),
+  };
+
+  if (session) el.title.textContent = '乐谱协作 · ' + session;
+
+  var engineReady = false;
+  var fileInput = null;
+
+  function setState(text, ready) {
+    el.state.textContent = text;
+    engineReady = !!ready;
+    el.open.disabled = !ready;
+  }
+
+  function post(type, payload) {
+    el.engine.contentWindow.postMessage({ source: 'score-collab-host', type: type, payload: payload || {} }, '*');
+  }
+
+  function boot() {
+    el.engine.src = engineUrl;
+    el.placeholder.classList.add('hidden');
+    el.engine.classList.remove('hidden');
+    el.load.disabled = true;
+    setState('引擎加载中…', false);
+  }
+
+  function openScoreFile() {
+    if (!engineReady) return;
+    if (!fileInput) {
+      fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = '.mscz,.mscx,.musicxml,.xml,.mxl';
+      fileInput.addEventListener('change', function () {
+        var file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        file.arrayBuffer().then(function (buffer) {
+          post('load-score', { name: file.name, data: new Uint8Array(buffer) });
+          setState('加载乐谱: ' + file.name, true);
+        });
+        fileInput.value = '';
+      });
+    }
+    fileInput.click();
+  }
+
+  // M2: boot the engine as soon as the panel opens (session-scoped iframe =
+  // session-scoped engine instance). The button only force-reloads it.
+  boot();
+
+  el.open.addEventListener('click', openScoreFile);
+  el.load.addEventListener('click', boot);
+
+  // Host side of the control plane: relay engine events to the opener and
+  // accept requests from it. The engine build embeds the matching side.
+  window.addEventListener('message', function (event) {
+    var msg = event.data;
+    if (!msg || msg.source !== 'score-collab-engine') return;
+    switch (msg.type) {
+      case 'ready':
+        setState('引擎就绪' + (msg.payload && msg.payload.version ? ' · ' + msg.payload.version : ''), true);
+        break;
+      case 'state':
+        setState('引擎工作目录就绪', true);
+        break;
+      case 'saved':
+        setState('已保存', true);
+        break;
+      case 'score-loaded':
+        setState('已加载乐谱: ' + (msg.payload && msg.payload.name ? msg.payload.name : ''), true);
+        break;
+      case 'error':
+        setState('引擎错误: ' + (msg.payload && msg.payload.message ? msg.payload.message : '未知'), false);
+        break;
+    }
+    if (window.opener) {
+      window.opener.postMessage({ source: 'score-collab-engine', type: msg.type, payload: msg.payload || {} }, '*');
+    }
+  });
+})();
+</script>
+</body>
+</html>
