@@ -1,0 +1,289 @@
+<!--
+Copyright (C) 2024 The Qt Company Ltd.
+SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+-->
+
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+    <!--Set visual viewport size for mobile devices to the device size,
+        witch results in a scale of 1 and a 1:1 mapping between CSS pixels
+        and Qt device independent pixels. -->
+    <meta name="viewport" content="width=device-width, height=device-height, user-scalable=0"/>
+
+    <title>MuseScoreStudio</title>
+    <style>
+      html, body { padding: 0; margin: 0; overflow: hidden; height: 100% }
+      #spinner {
+        display: flex;
+        justify-content: center; /* горизонтальное выравнивание */
+        align-items: center;     /* вертикальное выравнивание */
+        height: 100vh;           /* на всю высоту viewport */
+      }
+      #panel { 
+        width: 100%; 
+        height: 40px; 
+        background-color: #f0f0f0; 
+        display: flex; 
+        align-items: center;
+        padding: 2px 5px;
+        box-sizing: border-box;
+      }
+      #panel button {
+        margin-right: 5px;
+        height: 16px;
+        font-size: 10px;
+        line-height: 10px;
+        padding: 0 4px;
+        cursor: pointer;
+      }
+      #screen { width: 100%; height: calc(100% - 40px); }
+    </style>
+  </head>
+  <body>
+
+    <figure id="spinner">
+      <center style="margin-top:1.5em; line-height:150%">
+        <strong>MuseScoreStudio</strong>
+        <div id="status"></div>
+        <noscript>JavaScript is disabled. Please enable JavaScript to use this application.</noscript>
+      </center>
+    </figure>
+
+    <div id="screen"></div>
+
+    <button id="save-score" title="保存当前乐谱回会话工作目录" style="position:fixed;top:8px;right:8px;z-index:999;padding:4px 12px;font:12px system-ui;cursor:pointer;background:#f5f5f5;border:1px solid #ccc;border-radius:4px;">保存</button>
+
+    <!-- <div id="panel">
+      <button onclick="onclickTest1()">Test 1</button>
+      <button>Test 2</button>
+      <button>Test 3</button>
+      <input id="load_file" type="file" onchange="window.muapi.loadScoreFile(this.files[0])">
+    </div> -->
+
+    <script type="module">
+      import createMuApi from "./distr/muapi.js";
+
+      const spinner = document.querySelector('#spinner');
+      const screen = document.querySelector('#screen');
+      const status = document.querySelector('#status');
+
+      // Surface every fatal signal on the page itself so iframe debugging
+      // needs no devtools.
+      const lastError = (label, error) => {
+        const text = error && (error.stack || error.message) ? (error.stack || error.message) : String(error);
+        console.error('[viewer]', label, text);
+        status.innerHTML = label + ': ' + String(text).split('\n').slice(0, 6).join(' | ');
+      };
+      window.addEventListener('error', event => lastError('window error', event.error || event.message));
+      window.addEventListener('unhandledrejection', event => lastError('unhandledrejection', event.reason));
+
+      const showUi = (ui) => {
+          [spinner, screen].forEach(element => element.style.display = 'none');
+          if (screen === ui)
+              screen.style.position = 'default';
+          ui.style.display = 'block';
+      }
+
+      // Debug: report Qt canvas/DOM state so a white screen can be bisected
+      // (canvas missing vs. canvas present but blank) without devtools.
+      const domReport = (tag) => {
+        const canvases = Array.from(document.querySelectorAll('canvas'));
+        const mod = window.muapi && window.muapi.Module;
+        const info = {
+          tag,
+          viewport: [window.innerWidth, window.innerHeight],
+          screenChildren: screen ? Array.from(screen.children).map(e => '<' + e.tagName.toLowerCase() + '>#' + (e.id || '')) : 'no-screen',
+          screenSize: screen ? [screen.offsetWidth, screen.offsetHeight] : null,
+          canvasCount: canvases.length,
+          canvases: canvases.map(cv => ({ id: cv.id, size: [cv.width, cv.height], offset: [cv.offsetWidth, cv.offsetHeight], display: getComputedStyle(cv).display })),
+          moduleCanvas: mod ? (mod.canvas ? { parent: (mod.canvas.parentElement && (mod.canvas.parentElement.id || mod.canvas.parentElement.tagName)), size: [mod.canvas.width, mod.canvas.height] } : 'module-no-canvas') : 'no-module',
+          screenShadow: (() => { const sc = screen && screen.querySelector('#qt-shadow-container'); if (!sc) return 'no-shadow-container'; if (!sc.shadowRoot) return { hasShadowRoot: false, html: sc.innerHTML.slice(0, 120) }; const c = sc.shadowRoot.querySelector('canvas'); return { hasShadowRoot: true, canvases: sc.shadowRoot.querySelectorAll('canvas').length, canvas: c ? { size: [c.width, c.height], offset: [c.offsetWidth, c.offsetHeight] } : null }; })(),
+        };
+        console.log('[viewer] DOM-REPORT', JSON.stringify(info));
+      };
+
+      try {
+      
+        showUi(spinner);
+        status.innerHTML = 'Loading...';
+
+        window.muapi = await createMuApi({
+
+          // properties
+          screen: screen,
+
+          // runtime
+          onLoaded: () => {
+            console.log('[viewer] onLoaded');
+            domReport('onLoaded');
+            // Score-collab control plane: tell the host panel the engine is up.
+            if (window.parent !== window) {
+              window.parent.postMessage({ source: 'score-collab-engine', type: 'ready', payload: { version: '4.7.4' } }, '*');
+            }
+            showUi(screen);
+          },
+          onLog: line => { status.innerHTML = 'wasm: ' + String(line).split('\n').slice(-2).join(' | '); },
+          onExit: function(exitData) {
+            console.error('[viewer] onExit', JSON.stringify(exitData), exitData);
+            status.innerHTML = 'Application exit';
+            status.innerHTML += exitData.code !== undefined ? ` with code ${exitData.code}` : '';
+            status.innerHTML += exitData.text !== undefined ? ` (${exitData.text})` : '';
+            status.innerHTML += ' — see console for details';
+            showUi(spinner);
+          },
+
+          // api callbacks
+          onProjectSaved: async function(data) {
+            console.log("[html] onProjectSaved len: ", data.length);
+            const result = await syncToWorkdir(data);
+            if (result.synced) {
+              console.log('[viewer] saved to session workdir:', JSON.stringify(result.body));
+              setSaveState('已保存 ✓', true);
+              window.parent.postMessage({ source: 'score-collab-engine', type: 'saved', payload: result.body || {} }, '*');
+            } else {
+              console.warn('[viewer] save write-back skipped:', result.reason);
+              setSaveState('保存失败', false);
+              window.parent.postMessage({ source: 'score-collab-engine', type: 'error', payload: { message: '保存回写失败: ' + (result.reason ?? '') } }, '*');
+            }
+          }
+        })
+
+        const saveBtn = document.getElementById('save-score');
+        const setSaveState = (text, ok) => {
+          if (!saveBtn) return;
+          saveBtn.textContent = text;
+          saveBtn.style.background = ok === undefined ? '#f5f5f5' : (ok ? '#d4edda' : '#f8d7da');
+          saveBtn.style.borderColor = ok === undefined ? '#ccc' : (ok ? '#a3cfbb' : '#f1aeb5');
+          if (ok !== undefined) {
+            setTimeout(() => {
+              saveBtn.textContent = '保存';
+              saveBtn.style.background = '#f5f5f5';
+              saveBtn.style.borderColor = '#ccc';
+            }, 3000);
+          }
+        };
+        saveBtn.addEventListener('click', () => {
+          if (window.muapi && window.muapi.Module && typeof window.muapi.Module._saveScore === 'function') {
+            setSaveState('保存中…', undefined);
+            window.muapi.Module._saveScore();
+          } else {
+            setSaveState('保存失败（引擎未就绪）', false);
+          }
+        });
+
+        // Write the given score bytes (mscz from the engine) back to the
+        // session workdir so the agent plane sees what the user opened/saved.
+        const syncToWorkdir = async (data) => {
+          const sid = new URLSearchParams(location.search).get('session') || '';
+          if (!sid || !data) return { synced: false, reason: 'no-session' };
+          try {
+            const res = await fetch('/score-collab/api/session/' + encodeURIComponent(sid) + '/score', {
+              method: 'POST',
+              headers: { 'content-type': 'application/octet-stream' },
+              body: data,
+            });
+            const body = await res.json();
+            return { synced: res.ok, body };
+          } catch (error) {
+            return { synced: false, reason: error instanceof Error ? error.message : String(error) };
+          }
+        };
+
+        document.addEventListener('click', window.muapi.startAudioProcessing, { once: true });
+
+        // Score-collab control plane (engine side): accept load-score commands
+        // from the host panel. The payload carries the raw score file bytes
+        // (mscz/mscx/musicxml), which postMessage can transfer as
+        // ArrayBuffer/Uint8Array via structured clone.
+        window.addEventListener('message', async (event) => {
+          const msg = event.data;
+          if (!msg || msg.source !== 'score-collab-host') return;
+          if (msg.type !== 'load-score') return;
+          const payload = msg.payload || {};
+          const data = payload.data;
+          if (!data || !window.muapi) {
+            console.warn('[viewer] load-score ignored (no data or muapi not ready)', payload.name || '');
+            return;
+          }
+          try {
+            await window.muapi.loadScoreData(data instanceof Uint8Array ? data : new Uint8Array(data));
+            console.log('[viewer] loaded score:', payload.name || '(unnamed)');
+            // Opening a file in the engine also makes it the session's current
+            // score on disk, so the agent plane can see it (score_sync/view).
+            const sync = await syncToWorkdir(data instanceof Uint8Array ? data : new Uint8Array(data));
+            console.log('[viewer] opened score synced to workdir:', JSON.stringify(sync.synced ? sync.body : { reason: sync.reason }));
+            window.parent.postMessage({ source: 'score-collab-engine', type: 'score-loaded', payload: { name: payload.name || '' } }, '*');
+          } catch (error) {
+            console.error('[viewer] load-score failed', error);
+            window.parent.postMessage({ source: 'score-collab-engine', type: 'error', payload: { message: error instanceof Error ? error.message : String(error) } }, '*');
+          }
+        });
+
+        // Score-collab control plane (self-load): when opened with ?session=,
+        // load the session's current score on open (so reopening the panel
+        // shows it again), then poll for pending engine reloads the agent
+        // marked (score_create/score_open/score_edit).
+        const sessionParam = new URLSearchParams(location.search).get('session') || '';
+        if (sessionParam) {
+          const loadSessionScore = async (label) => {
+            try {
+              const fileRes = await fetch('/score-collab/api/session/' + encodeURIComponent(sessionParam) + '/score');
+              if (!fileRes.ok) return false;
+              const data = new Uint8Array(await fileRes.arrayBuffer());
+              await window.muapi.loadScoreData(data);
+              console.log('[viewer]', label, 'loaded score');
+              return true;
+            } catch (error) {
+              console.warn('[viewer]', label, 'load failed', error);
+              return false;
+            }
+          };
+          void loadSessionScore('open:');
+          setInterval(async () => {
+            try {
+              const res = await fetch('/score-collab/api/state?session=' + encodeURIComponent(sessionParam));
+              if (!res.ok) return;
+              const body = await res.json();
+              if (!body.pendingLoad) return;
+              await loadSessionScore('pending:');
+            } catch (error) { /* transient polling errors are fine */ }
+          }, 1500);
+        }
+
+        domReport('after-create');
+
+        // Watch for the Qt canvas appearing (it may be created lazily, seconds
+        // after main() when the first frame is actually drawn).
+        const obs = new MutationObserver(() => {
+          const c = document.querySelector('canvas');
+          if (c) {
+            console.log('[viewer] CANVAS-APPEARED', JSON.stringify({ parent: c.parentElement && (c.parentElement.id || c.parentElement.tagName), size: [c.width, c.height], offset: [c.offsetWidth, c.offsetHeight] }));
+            obs.disconnect();
+          }
+        });
+        obs.observe(screen, { childList: true, subtree: true });
+
+        // Is the iframe's rAF loop alive? (rules out throttled iframe rendering)
+        (() => {
+          let ticks = 0; const t0 = performance.now();
+          const loop = () => { ticks++; if (performance.now() - t0 < 2000) requestAnimationFrame(loop); else console.log('[viewer] rAF ticks/2s:', ticks); };
+          requestAnimationFrame(loop);
+        })();
+
+        setTimeout(() => domReport('t+2s'), 2000);
+        setTimeout(() => domReport('t+5s'), 5000);
+        setTimeout(() => domReport('t+15s'), 15000);
+        setTimeout(() => domReport('t+30s'), 30000);
+    } catch (e) {
+        console.error(e);
+        console.error(e.stack);
+        lastError('load failed', e);
+    }
+    </script>
+    <script src="MuseScoreStudio.js"></script> 
+  </body>
+</html>
