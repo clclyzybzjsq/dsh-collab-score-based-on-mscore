@@ -7,9 +7,11 @@
  * UI state here (panel open/close, probe results) never enters the session
  * log: it is pure presentation, invisible to the model (repo rule).
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ScorePanelToggle } from './ScorePanelToggle'
 import { en, NS, zh, type ScoreKey } from './locales'
 

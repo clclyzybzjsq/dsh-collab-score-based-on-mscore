@@ -61,7 +61,7 @@ const frameStyle: CSSProperties = {
  * @returns the entry and its engine overlay, or null outside score-collab mode.
  */
 export function ScorePanelToggle({ sessionId, useSessions, t }: ScorePanelToggleProps) {
-  const preset = useSessions(state => state.byId[sessionId]?.agentPreset)
+  const preset = useSessions(state => state.byId[sessionId]?.projectionValues?.agentPreset)
   const [open, setOpen] = useState(false)
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
