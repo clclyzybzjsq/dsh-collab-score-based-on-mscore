@@ -7,6 +7,8 @@ A session-level score edit / preview / playback panel (MuseScore 4.x WebAssembly
 > Demo / 演示版。功能与文档会随开发迭代变化；已知限制见文末。
 > This is a demo build. Features and docs evolve; known limitations are listed at the end.
 
+**适配ds-h-v0.1.2-alpha的版本已构建 同时0.1.1版本请查看release**
+
 ---
 
 ## 功能 / Features
