@@ -1,9 +1,0 @@
-SPDX-License-Identifier: GPL-3.0-only
-
-This project is licensed under the GNU General Public License, version 3.
-
-It integrates the MuseScore Studio engine (GPL-3.0) as a WebAssembly component;
-engine assets remain independent GPL components with license and source
-availability as documented in README.md.
-
-Full license text: https://www.gnu.org/licenses/gpl-3.0.txt
